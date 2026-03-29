@@ -1,10 +1,5 @@
-# Env Manager
-
-A zero-dependency Python CLI tool.
-
-## Usage
-
+# env_manager
+Single-file Python CLI tool. Zero deps, Python 3.8+.
 ```bash
-python env_manager.py test
-python env_manager.py demo
+python3 env_manager.py --test
 ```

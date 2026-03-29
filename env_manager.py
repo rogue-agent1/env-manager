@@ -1,68 +1,88 @@
 #!/usr/bin/env python3
-"""Environment variable manager with .env file support."""
+"""env_manager - Environment variable manager with .env file support."""
 import sys, os, re
 
-def parse_env_file(content):
-    env = {}
-    for line in content.split(chr(10)):
-        line = line.strip()
-        if not line or line.startswith("#"): continue
-        if "=" not in line: continue
-        key, _, value = line.partition("=")
-        key = key.strip(); value = value.strip()
-        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-            value = value[1:-1]
-        value = re.sub(r'\$\{(\w+)\}', lambda m: env.get(m.group(1), os.environ.get(m.group(1), "")), value)
-        env[key] = value
-    return env
-
-def serialize_env(env):
-    lines = []
-    for k, v in sorted(env.items()):
-        if " " in v or "'" in v: lines.append(f'{k}="{v}"')
-        else: lines.append(f"{k}={v}")
-    return chr(10).join(lines)
-
-def merge_envs(*envs):
+def parse_env(text):
     result = {}
-    for e in envs: result.update(e)
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        result[key] = val
     return result
 
-def validate_env(env, required):
-    missing = [k for k in required if k not in env or not env[k]]
+def to_env(env_dict):
+    lines = []
+    for k, v in sorted(env_dict.items()):
+        if " " in str(v) or "=" in str(v) or '"' in str(v):
+            v = f'"{v}"'
+        lines.append(f"{k}={v}")
+    return "\n".join(lines)
+
+def interpolate(env_dict):
+    result = dict(env_dict)
+    for key, val in result.items():
+        def replacer(m):
+            ref = m.group(1)
+            return result.get(ref, m.group(0))
+        result[key] = re.sub(r'\$\{(\w+)\}', replacer, str(val))
+    return result
+
+def merge(*env_dicts):
+    result = {}
+    for d in env_dicts:
+        result.update(d)
+    return result
+
+def validate(env_dict, required_keys):
+    missing = [k for k in required_keys if k not in env_dict or not env_dict[k]]
     return missing
 
-def mask_secrets(env, patterns=None):
-    patterns = patterns or ["KEY", "SECRET", "PASSWORD", "TOKEN"]
-    masked = {}
-    for k, v in env.items():
-        if any(p in k.upper() for p in patterns):
-            masked[k] = v[:3] + "***" if len(v) > 3 else "***"
-        else: masked[k] = v
-    return masked
+def mask_secrets(env_dict, secret_patterns=None):
+    if secret_patterns is None:
+        secret_patterns = ["password", "secret", "key", "token", "api"]
+    result = {}
+    for k, v in env_dict.items():
+        if any(p in k.lower() for p in secret_patterns):
+            result[k] = "***"
+        else:
+            result[k] = v
+    return result
 
-def main():
-    if len(sys.argv) < 2: print("Usage: env_manager.py <demo|test>"); return
-    if sys.argv[1] == "test":
-        content = 'DB_HOST=localhost' + chr(10) + 'DB_PORT=5432' + chr(10) + '# comment' + chr(10) + 'DB_NAME="my db"' + chr(10) + 'DB_URL=${DB_HOST}:${DB_PORT}'
-        env = parse_env_file(content)
-        assert env["DB_HOST"] == "localhost"
-        assert env["DB_PORT"] == "5432"
-        assert env["DB_NAME"] == "my db"
-        assert env["DB_URL"] == "localhost:5432"
-        s = serialize_env({"A": "1", "B": "hello world"})
-        assert "A=1" in s; assert 'B="hello world"' in s
-        m = merge_envs({"A": "1"}, {"A": "2", "B": "3"})
-        assert m == {"A": "2", "B": "3"}
-        missing = validate_env({"A": "1"}, ["A", "B"])
-        assert missing == ["B"]
-        masked = mask_secrets({"API_KEY": "sk-abc123", "HOST": "localhost"})
-        assert "***" in masked["API_KEY"]; assert masked["HOST"] == "localhost"
-        assert parse_env_file("") == {}
-        assert parse_env_file("# only comments") == {}
-        print("All tests passed!")
-    else:
-        env = parse_env_file(sys.stdin.read() if not sys.stdin.isatty() else "KEY=value")
-        print(mask_secrets(env))
+def test():
+    env_text = """
+# Database config
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME="my database"
+SECRET_KEY='abc123'
+"""
+    env = parse_env(env_text)
+    assert env["DB_HOST"] == "localhost"
+    assert env["DB_PORT"] == "5432"
+    assert env["DB_NAME"] == "my database"
+    assert env["SECRET_KEY"] == "abc123"
+    output = to_env(env)
+    reparsed = parse_env(output)
+    assert reparsed["DB_HOST"] == "localhost"
+    env2 = {"BASE": "/app", "LOG": "${BASE}/logs"}
+    interp = interpolate(env2)
+    assert interp["LOG"] == "/app/logs"
+    m = merge({"A": "1"}, {"B": "2"}, {"A": "3"})
+    assert m == {"A": "3", "B": "2"}
+    missing = validate(env, ["DB_HOST", "MISSING_VAR"])
+    assert missing == ["MISSING_VAR"]
+    masked = mask_secrets(env)
+    assert masked["SECRET_KEY"] == "***"
+    assert masked["DB_HOST"] == "localhost"
+    print("All tests passed!")
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    test() if "--test" in sys.argv else print("env_manager: Env var manager. Use --test")
