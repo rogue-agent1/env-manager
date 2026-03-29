@@ -1,88 +1,70 @@
 #!/usr/bin/env python3
-"""env_manager - Environment variable manager with .env file support."""
-import sys, os, re
+"""Environment variable manager. Zero dependencies."""
+import os, sys, json
 
-def parse_env(text):
-    result = {}
-    for line in text.split("\n"):
+def get(key, default=None, type_fn=str):
+    val = os.environ.get(key, default)
+    if val is None: return None
+    try: return type_fn(val)
+    except: return default
+
+def require(key):
+    val = os.environ.get(key)
+    if val is None:
+        raise EnvironmentError(f"Required env var {key} not set")
+    return val
+
+def get_bool(key, default=False):
+    val = os.environ.get(key, "").lower()
+    if val in ("1", "true", "yes", "on"): return True
+    if val in ("0", "false", "no", "off"): return False
+    return default
+
+def get_int(key, default=0):
+    return get(key, default, int)
+
+def get_list(key, sep=",", default=None):
+    val = os.environ.get(key)
+    if val is None: return default or []
+    return [item.strip() for item in val.split(sep) if item.strip()]
+
+def prefix_group(prefix):
+    return {k[len(prefix):]: v for k, v in os.environ.items() if k.startswith(prefix)}
+
+def dump(pattern=None):
+    items = sorted(os.environ.items())
+    if pattern:
+        items = [(k, v) for k, v in items if pattern.lower() in k.lower()]
+    return items
+
+def mask(value, show=4):
+    if len(value) <= show: return "***"
+    return value[:show] + "*" * (len(value) - show)
+
+def to_dotenv(env_vars):
+    return "\n".join(f"{k}={v}" for k, v in sorted(env_vars.items()))
+
+def from_dotenv(text):
+    env = {}
+    for line in text.splitlines():
         line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        key, val = line.split("=", 1)
-        key = key.strip()
-        val = val.strip()
-        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-            val = val[1:-1]
-        result[key] = val
-    return result
-
-def to_env(env_dict):
-    lines = []
-    for k, v in sorted(env_dict.items()):
-        if " " in str(v) or "=" in str(v) or '"' in str(v):
-            v = f'"{v}"'
-        lines.append(f"{k}={v}")
-    return "\n".join(lines)
-
-def interpolate(env_dict):
-    result = dict(env_dict)
-    for key, val in result.items():
-        def replacer(m):
-            ref = m.group(1)
-            return result.get(ref, m.group(0))
-        result[key] = re.sub(r'\$\{(\w+)\}', replacer, str(val))
-    return result
-
-def merge(*env_dicts):
-    result = {}
-    for d in env_dicts:
-        result.update(d)
-    return result
-
-def validate(env_dict, required_keys):
-    missing = [k for k in required_keys if k not in env_dict or not env_dict[k]]
-    return missing
-
-def mask_secrets(env_dict, secret_patterns=None):
-    if secret_patterns is None:
-        secret_patterns = ["password", "secret", "key", "token", "api"]
-    result = {}
-    for k, v in env_dict.items():
-        if any(p in k.lower() for p in secret_patterns):
-            result[k] = "***"
-        else:
-            result[k] = v
-    return result
-
-def test():
-    env_text = """
-# Database config
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME="my database"
-SECRET_KEY='abc123'
-"""
-    env = parse_env(env_text)
-    assert env["DB_HOST"] == "localhost"
-    assert env["DB_PORT"] == "5432"
-    assert env["DB_NAME"] == "my database"
-    assert env["SECRET_KEY"] == "abc123"
-    output = to_env(env)
-    reparsed = parse_env(output)
-    assert reparsed["DB_HOST"] == "localhost"
-    env2 = {"BASE": "/app", "LOG": "${BASE}/logs"}
-    interp = interpolate(env2)
-    assert interp["LOG"] == "/app/logs"
-    m = merge({"A": "1"}, {"B": "2"}, {"A": "3"})
-    assert m == {"A": "3", "B": "2"}
-    missing = validate(env, ["DB_HOST", "MISSING_VAR"])
-    assert missing == ["MISSING_VAR"]
-    masked = mask_secrets(env)
-    assert masked["SECRET_KEY"] == "***"
-    assert masked["DB_HOST"] == "localhost"
-    print("All tests passed!")
+        if not line or line.startswith("#"): continue
+        if "=" in line:
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip().strip("'").strip('"')
+    return env
 
 if __name__ == "__main__":
-    test() if "--test" in sys.argv else print("env_manager: Env var manager. Use --test")
+    import argparse
+    p = argparse.ArgumentParser(description="Env manager")
+    p.add_argument("action", choices=["get","list","search"])
+    p.add_argument("key", nargs="?")
+    args = p.parse_args()
+    if args.action == "get":
+        print(os.environ.get(args.key, "(not set)"))
+    elif args.action == "list":
+        for k, v in dump()[:20]:
+            print(f"{k}={mask(v)}")
+    elif args.action == "search":
+        for k, v in dump(args.key):
+            print(f"{k}={v}")
