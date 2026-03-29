@@ -2,69 +2,39 @@
 """Environment variable manager. Zero dependencies."""
 import os, sys, json
 
-def get(key, default=None, type_fn=str):
-    val = os.environ.get(key, default)
-    if val is None: return None
-    try: return type_fn(val)
-    except: return default
+def get_env(key, default=None):
+    return os.environ.get(key, default)
 
-def require(key):
-    val = os.environ.get(key)
-    if val is None:
-        raise EnvironmentError(f"Required env var {key} not set")
-    return val
+def set_env(key, value):
+    os.environ[key] = str(value)
 
-def get_bool(key, default=False):
-    val = os.environ.get(key, "").lower()
-    if val in ("1", "true", "yes", "on"): return True
-    if val in ("0", "false", "no", "off"): return False
-    return default
+def list_env(prefix=None):
+    result = {}
+    for k, v in sorted(os.environ.items()):
+        if prefix and not k.startswith(prefix): continue
+        result[k] = v
+    return result
 
-def get_int(key, default=0):
-    return get(key, default, int)
+def diff_env(snapshot):
+    """Compare current env with a snapshot dict."""
+    current = dict(os.environ)
+    added = {k: v for k, v in current.items() if k not in snapshot}
+    removed = {k: v for k, v in snapshot.items() if k not in current}
+    changed = {k: (snapshot[k], current[k]) for k in current if k in snapshot and current[k] != snapshot[k]}
+    return {"added": added, "removed": removed, "changed": changed}
 
-def get_list(key, sep=",", default=None):
-    val = os.environ.get(key)
-    if val is None: return default or []
-    return [item.strip() for item in val.split(sep) if item.strip()]
+def snapshot():
+    return dict(os.environ)
 
-def prefix_group(prefix):
-    return {k[len(prefix):]: v for k, v in os.environ.items() if k.startswith(prefix)}
-
-def dump(pattern=None):
-    items = sorted(os.environ.items())
-    if pattern:
-        items = [(k, v) for k, v in items if pattern.lower() in k.lower()]
-    return items
-
-def mask(value, show=4):
-    if len(value) <= show: return "***"
-    return value[:show] + "*" * (len(value) - show)
-
-def to_dotenv(env_vars):
-    return "\n".join(f"{k}={v}" for k, v in sorted(env_vars.items()))
-
-def from_dotenv(text):
-    env = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"): continue
-        if "=" in line:
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip().strip("'").strip('"')
-    return env
+def export_env(keys=None):
+    """Generate export statements."""
+    items = {k: os.environ[k] for k in (keys or os.environ)}
+    return "\n".join(f'export {k}="{v}"' for k, v in sorted(items.items()))
 
 if __name__ == "__main__":
-    import argparse
-    p = argparse.ArgumentParser(description="Env manager")
-    p.add_argument("action", choices=["get","list","search"])
-    p.add_argument("key", nargs="?")
-    args = p.parse_args()
-    if args.action == "get":
-        print(os.environ.get(args.key, "(not set)"))
-    elif args.action == "list":
-        for k, v in dump()[:20]:
-            print(f"{k}={mask(v)}")
-    elif args.action == "search":
-        for k, v in dump(args.key):
+    if len(sys.argv) > 1:
+        p = sys.argv[1]
+        for k, v in list_env(p).items():
             print(f"{k}={v}")
+    else:
+        print(f"Environment has {len(os.environ)} variables")

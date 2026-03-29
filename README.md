@@ -1,9 +1,3 @@
-# env-manager
-
-Environment variable manager. Zero dependencies, single file, Python 3.8+.
-
-## Usage
-
-```bash
-python3 env_manager.py --help
-```
+# env_manager
+Environment variable manager — get, set, snapshot, diff.
+Single-file Python, zero dependencies.
